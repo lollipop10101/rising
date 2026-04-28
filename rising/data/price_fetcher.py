@@ -14,6 +14,8 @@ class TokenMarket:
     pair_address: Optional[str]
     dex_id: Optional[str]
     url: Optional[str]
+    symbol: Optional[str] = None
+    token_name: Optional[str] = None
 
 class DexScreenerClient:
     BASE = "https://api.dexscreener.com/latest/dex/tokens"
@@ -29,6 +31,7 @@ class DexScreenerClient:
             return None
         # choose highest-liquidity pair
         pair: Dict[str, Any] = max(pairs, key=lambda p: float((p.get("liquidity") or {}).get("usd") or 0))
+        base = pair.get("baseToken", {}) or {}
         volume = pair.get("volume") or {}
         pc = pair.get("priceChange") or {}
         return TokenMarket(
@@ -41,6 +44,8 @@ class DexScreenerClient:
             pair_address=pair.get("pairAddress"),
             dex_id=pair.get("dexId"),
             url=pair.get("url"),
+            symbol=base.get("symbol"),
+            token_name=base.get("name"),
         )
 
 def _float(x: Any) -> Optional[float]:
