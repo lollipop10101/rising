@@ -1,20 +1,49 @@
 from __future__ import annotations
-from dataclasses import dataclass
-from rising.intelligence.token_history_checker import SignalType
-from rising.risk.risk_engine import RiskResult
-from rising.data.price_fetcher import TokenMarket
+from rising.models import DecisionResult, RiskResult, SignalType, TradeDecision
 
-@dataclass
-class TradeDecision:
-    action: str  # BUY_PAPER or SKIP
-    reason: str
 
 class StrategyEngine:
-    def decide(self, signal_type: SignalType, market: TokenMarket | None, risk: RiskResult) -> TradeDecision:
+    def __init__(self, paper_trade_usd: float, max_risk_score: int) -> None:
+        self.paper_trade_usd = paper_trade_usd
+        self.max_risk_score = max_risk_score
+
+    def decide(
+        self,
+        signal_type: SignalType,
+        risk: RiskResult,
+        open_positions: int,
+        max_open_positions: int,
+    ) -> DecisionResult:
         if signal_type != SignalType.NEW_TOKEN:
-            return TradeDecision("SKIP", f"Not fresh: {signal_type.value}")
-        if not risk.allowed:
-            return TradeDecision("SKIP", f"Risk too high: {risk.score} ({'; '.join(risk.reasons)})")
-        if market is None or market.price_usd is None:
-            return TradeDecision("SKIP", "Missing price")
-        return TradeDecision("BUY_PAPER", f"Fresh token and risk score {risk.score}")
+            return DecisionResult(
+                TradeDecision.TRACK_ONLY,
+                [f"Not fresh: {signal_type.value}"],
+                0.0,
+            )
+
+        if open_positions >= max_open_positions:
+            return DecisionResult(
+                TradeDecision.SKIP,
+                ["Max open positions reached"],
+                0.0,
+            )
+
+        if risk.blocked:
+            return DecisionResult(
+                TradeDecision.SKIP,
+                ["Risk blocked", *risk.reasons],
+                0.0,
+            )
+
+        if risk.score > self.max_risk_score:
+            return DecisionResult(
+                TradeDecision.SKIP,
+                [f"Risk too high: {risk.score}", *risk.reasons],
+                0.0,
+            )
+
+        return DecisionResult(
+            TradeDecision.BUY,
+            [f"Risk accepted: {risk.score}"],
+            self.paper_trade_usd,
+        )

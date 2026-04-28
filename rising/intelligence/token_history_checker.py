@@ -1,30 +1,31 @@
 from __future__ import annotations
-from datetime import datetime, timezone
-from enum import Enum
-from typing import Dict, Any, Optional
+from datetime import datetime
+from rising.models import SignalType
 
-class SignalType(str, Enum):
-    NEW_TOKEN = "NEW_TOKEN"
-    RECENT_REPEAT = "RECENT_REPEAT"
-    ALREADY_TRADED = "ALREADY_TRADED"
-    OLD_TRACKING = "OLD_TRACKING"
-    RECHECK_CAREFUL = "RECHECK_CAREFUL"
 
 class TokenHistoryChecker:
-    def __init__(self, recent_repeat_minutes: int = 10, old_tracking_minutes: int = 60):
+    def __init__(
+        self,
+        db,  # RisingDB or compatible
+        recent_repeat_minutes: int = 10,
+        old_address_minutes: int = 60,
+    ) -> None:
+        self.db = db
         self.recent_repeat_minutes = recent_repeat_minutes
-        self.old_tracking_minutes = old_tracking_minutes
+        self.old_address_minutes = old_address_minutes
 
-    def classify(self, token: Optional[Dict[str, Any]], message_time: datetime | None = None) -> SignalType:
+    def classify(self, token_address: str, message_time: datetime) -> SignalType:
+        token = self.db.get_token(token_address)
         if token is None:
             return SignalType.NEW_TOKEN
-        if int(token.get("was_traded") or 0) == 1:
-            return SignalType.ALREADY_TRADED
-        message_time = message_time or datetime.now(timezone.utc)
+
         first_seen = datetime.fromisoformat(token["first_seen_at"])
-        age_minutes = (message_time - first_seen).total_seconds() / 60
-        if age_minutes < self.recent_repeat_minutes:
+        age_minutes = (message_time - first_seen).total_seconds() / 60.0
+
+        if int(token.get("was_traded", 0)) == 1:
+            return SignalType.ALREADY_TRADED
+        if age_minutes <= self.recent_repeat_minutes:
             return SignalType.RECENT_REPEAT
-        if age_minutes > self.old_tracking_minutes:
+        if age_minutes >= self.old_address_minutes:
             return SignalType.OLD_TRACKING
-        return SignalType.RECHECK_CAREFUL
+        return SignalType.RECHECK_CAUTION

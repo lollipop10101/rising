@@ -1,55 +1,52 @@
 from __future__ import annotations
-from dataclasses import dataclass
-from typing import Optional, Any, Dict
-import httpx
+from datetime import datetime, timezone
+from typing import Any
+import aiohttp
+from rising.models import MarketSnapshot
 
-@dataclass
-class TokenMarket:
-    address: str
-    price_usd: Optional[float]
-    liquidity_usd: Optional[float]
-    volume_5m: Optional[float]
-    volume_1h: Optional[float]
-    price_change_5m: Optional[float]
-    pair_address: Optional[str]
-    dex_id: Optional[str]
-    url: Optional[str]
-    symbol: Optional[str] = None
-    token_name: Optional[str] = None
 
 class DexScreenerClient:
-    BASE = "https://api.dexscreener.com/latest/dex/tokens"
+    BASE = "https://api.dexscreener.com/latest/dex/tokens/{token}"
 
-    async def get_solana_token(self, token_address: str) -> Optional[TokenMarket]:
-        url = f"{self.BASE}/{token_address}"
-        async with httpx.AsyncClient(timeout=10) as client:
-            r = await client.get(url)
-            r.raise_for_status()
-            data = r.json()
-        pairs = [p for p in data.get("pairs", []) if p.get("chainId") == "solana"]
+    def __init__(self, timeout_seconds: int = 8) -> None:
+        self.timeout = aiohttp.ClientTimeout(total=timeout_seconds)
+
+    async def fetch_token(self, token_address: str) -> MarketSnapshot:
+        url = self.BASE.format(token=token_address)
+        async with aiohttp.ClientSession(timeout=self.timeout) as session:
+            async with session.get(url) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+        return self._parse(token_address, data)
+
+    def _parse(self, token_address: str, data: dict[str, Any]) -> MarketSnapshot:
+        pairs = [p for p in data.get("pairs") or [] if p.get("chainId") == "solana"]
         if not pairs:
-            return None
-        # choose highest-liquidity pair
-        pair: Dict[str, Any] = max(pairs, key=lambda p: float((p.get("liquidity") or {}).get("usd") or 0))
-        base = pair.get("baseToken", {}) or {}
-        volume = pair.get("volume") or {}
-        pc = pair.get("priceChange") or {}
-        return TokenMarket(
-            address=token_address,
-            price_usd=_float(pair.get("priceUsd")),
-            liquidity_usd=_float((pair.get("liquidity") or {}).get("usd")),
-            volume_5m=_float(volume.get("m5")),
-            volume_1h=_float(volume.get("h1")),
-            price_change_5m=_float(pc.get("m5")),
+            return MarketSnapshot(
+                token_address, None, None, None, None, None, None, None, datetime.now(timezone.utc)
+            )
+
+        def liquidity(pair: dict[str, Any]) -> float:
+            return float((pair.get("liquidity") or {}).get("usd") or 0)
+
+        pair = max(pairs, key=liquidity)
+        return MarketSnapshot(
+            token_address=token_address,
+            dex_url=pair.get("url"),
             pair_address=pair.get("pairAddress"),
-            dex_id=pair.get("dexId"),
-            url=pair.get("url"),
-            symbol=base.get("symbol"),
-            token_name=base.get("name"),
+            base_symbol=(pair.get("baseToken") or {}).get("symbol"),
+            price_usd=_safe_float(pair.get("priceUsd")),
+            liquidity_usd=_safe_float((pair.get("liquidity") or {}).get("usd")),
+            volume_5m_usd=_safe_float((pair.get("volume") or {}).get("m5")),
+            price_change_5m_pct=_safe_float((pair.get("priceChange") or {}).get("m5")),
+            fetched_at=datetime.now(timezone.utc),
         )
 
-def _float(x: Any) -> Optional[float]:
+
+def _safe_float(value: Any) -> float | None:
     try:
-        return float(x) if x is not None else None
-    except Exception:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
         return None

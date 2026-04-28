@@ -1,12 +1,12 @@
 from __future__ import annotations
-from rising.storage.database import RisingDB
+
 
 class PaperTrader:
     # Realistic cost parameters
     ENTRY_SLIPPAGE_PCT = 20.0   # worst-case 20% slippage on meme coin entry
     EXIT_FEE_PCT = 1.0          # 1% Solana DEX fee on exit
 
-    def __init__(self, db: RisingDB, quote_usd: float):
+    def __init__(self, db, quote_usd: float):
         self.db = db
         self.quote_usd = quote_usd
 
@@ -14,11 +14,10 @@ class PaperTrader:
         """
         Execute paper BUY with realistic entry slippage.
         Signal price is market_price at time of signal.
-        We pay market_price * (1 + slippage) = 20% worse than signal.
+        Effective entry price = market_price * (1 + slippage) — we get fewer tokens.
         """
-        signal_price = market_price  # price when signal was detected
-        # Realistic entry: we get fewer tokens due to slippage
-        # effective entry price = signal_price * (1 + slippage)
+        signal_price = market_price
+        # We pay 20% more than the signal price — fewer tokens per dollar
         entry_price = signal_price * (1 + self.ENTRY_SLIPPAGE_PCT / 100)
 
         trade_id = self.db.create_trade(
@@ -31,7 +30,7 @@ class PaperTrader:
         )
         return trade_id
 
-    def calc_exit(self, market_price: float, quote_usd: float, entry_price: float) -> tuple[float, float, float]:
+    def calc_exit(self, market_price: float, quote_usd: float, entry_price: float):
         """
         Calculate realistic exit:
         - We receive market_price * (1 - fee) per token
