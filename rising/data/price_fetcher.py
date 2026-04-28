@@ -1,7 +1,10 @@
 from __future__ import annotations
+
 from datetime import datetime, timezone
 from typing import Any
+
 import aiohttp
+
 from rising.models import MarketSnapshot
 
 
@@ -22,9 +25,7 @@ class DexScreenerClient:
     def _parse(self, token_address: str, data: dict[str, Any]) -> MarketSnapshot:
         pairs = [p for p in data.get("pairs") or [] if p.get("chainId") == "solana"]
         if not pairs:
-            return MarketSnapshot(
-                token_address, None, None, None, None, None, None, None, datetime.now(timezone.utc)
-            )
+            return MarketSnapshot(token_address, None, None, None, None, None, None, None, datetime.now(timezone.utc))
 
         def liquidity(pair: dict[str, Any]) -> float:
             return float((pair.get("liquidity") or {}).get("usd") or 0)

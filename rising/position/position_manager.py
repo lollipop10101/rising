@@ -1,56 +1,67 @@
 from __future__ import annotations
-import asyncio
-from datetime import datetime, timezone
-from rising.storage.database import RisingDB
-from rising.data.price_fetcher import DexScreenerClient
-from rising.models import TradeDecision
+
+from dataclasses import dataclass
+from datetime import datetime
+
+from rising.storage.database import Database
+
+
+@dataclass(slots=True)
+class ExitConfig:
+    stop_loss_pct: float
+    tp1_pct: float
+    tp1_sell_pct: float
+    tp2_pct: float
+    tp2_sell_pct: float
+    max_hold_minutes: float
 
 
 class PositionManager:
-    def __init__(self, db: RisingDB, price_client: DexScreenerClient, cfg) -> None:
+    def __init__(self, db: Database, config: ExitConfig) -> None:
         self.db = db
-        self.price_client = price_client
-        self.cfg = cfg
+        self.config = config
 
-    async def monitor_once(self) -> None:
-        trades = self.db.open_trades()
-        for t in trades:
-            market = await self.price_client.fetch_token(t["token_address"])
-            if not market or market.price_usd is None or not t["entry_price"]:
-                continue
+    def evaluate_trade(self, trade, current_price: float, now: datetime) -> str | None:
+        entry = float(trade["entry_price"])
+        remaining = float(trade["remaining_pct"])
+        realized = float(trade["realized_pnl_usd"])
+        size = float(trade["initial_size_usd"])
+        opened_at = datetime.fromisoformat(trade["opened_at"])
+        pnl_pct = ((current_price / entry) - 1.0) * 100.0
+        age_min = (now - opened_at).total_seconds() / 60.0
+        trade_id = int(trade["id"])
 
-            entry_price = t["entry_price"]
-            quote_usd = t["quote_usd"]
+        if pnl_pct <= self.config.stop_loss_pct:
+            pnl = self._pnl_for_pct(size, remaining, pnl_pct)
+            self.db.add_trade_event(trade_id, "STOP_LOSS", now, current_price, remaining, pnl, "full exit")
+            self.db.update_trade(trade_id, 0.0, realized + pnl, "CLOSED", now, "STOP_LOSS", current_price)
+            return "STOP_LOSS"
 
-            # Realistic exit: apply 1% fee
-            _, pnl_pct, pnl_usd = self._calc_exit(market.price_usd, quote_usd, entry_price)
+        if age_min >= self.config.max_hold_minutes:
+            pnl = self._pnl_for_pct(size, remaining, pnl_pct)
+            self.db.add_trade_event(trade_id, "TIME_EXIT", now, current_price, remaining, pnl, "full exit")
+            self.db.update_trade(trade_id, 0.0, realized + pnl, "CLOSED", now, "TIME_EXIT", current_price)
+            return "TIME_EXIT"
 
-            entry_time = datetime.fromisoformat(t["entry_time"])
-            age_min = (datetime.now(timezone.utc) - entry_time).total_seconds() / 60
-            reason = None
+        # TP2 first in case price jumps past both thresholds.
+        if pnl_pct >= self.config.tp2_pct and remaining > (100 - self.config.tp1_sell_pct - self.config.tp2_sell_pct):
+            qty = min(self.config.tp2_sell_pct, remaining)
+            pnl = self._pnl_for_pct(size, qty, pnl_pct)
+            new_remaining = remaining - qty
+            self.db.add_trade_event(trade_id, "TP2", now, current_price, qty, pnl, "partial exit")
+            status = "MOONBAG" if new_remaining > 0 else "CLOSED"
+            self.db.update_trade(trade_id, new_remaining, realized + pnl, status, None if new_remaining > 0 else now, "TP2" if new_remaining == 0 else None, current_price)
+            return "TP2"
 
-            if pnl_pct <= self.cfg.stop_loss_pct:
-                reason = f"Stop loss {pnl_pct:.1f}%"
-            elif pnl_pct >= self.cfg.tp2_pct:
-                reason = f"TP2 {pnl_pct:.1f}%"
-            elif age_min >= self.cfg.max_hold_minutes:
-                reason = f"Time out {age_min:.0f}min, pnl {pnl_pct:.1f}%"
+        if pnl_pct >= self.config.tp1_pct and remaining > (100 - self.config.tp1_sell_pct):
+            qty = min(self.config.tp1_sell_pct, remaining)
+            pnl = self._pnl_for_pct(size, qty, pnl_pct)
+            self.db.add_trade_event(trade_id, "TP1", now, current_price, qty, pnl, "partial exit")
+            self.db.update_trade(trade_id, remaining - qty, realized + pnl)
+            return "TP1"
 
-            if reason:
-                exit_price = market.price_usd * (1 - 1.0 / 100)
-                self.db.close_trade(
-                    t["id"], exit_price, pnl_usd, pnl_pct, reason,
-                    market_price_at_exit=market.price_usd,
-                    slippage_pct_exit=1.0,
-                )
+        return None
 
-    def _calc_exit(self, market_price: float, quote_usd: float, entry_price: float):
-        exit_price = market_price * (1 - 1.0 / 100)  # 1% fee
-        pnl_pct = ((exit_price - entry_price) / entry_price) * 100
-        pnl_usd = quote_usd * pnl_pct / 100
-        return exit_price, pnl_pct, pnl_usd
-
-    async def run_forever(self) -> None:
-        while True:
-            await self.monitor_once()
-            await asyncio.sleep(self.cfg.poll_seconds)
+    @staticmethod
+    def _pnl_for_pct(initial_size_usd: float, qty_pct: float, pnl_pct: float) -> float:
+        return initial_size_usd * (qty_pct / 100.0) * (pnl_pct / 100.0)

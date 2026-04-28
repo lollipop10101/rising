@@ -1,24 +1,29 @@
 from __future__ import annotations
+
 from dataclasses import dataclass
-from datetime import datetime
-from enum import Enum
+from datetime import datetime, timezone
+from enum import StrEnum
 
 
-class SignalType(str, Enum):
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+class SignalType(StrEnum):
     NEW_TOKEN = "NEW_TOKEN"
-    ALREADY_TRADED = "ALREADY_TRADED"
     RECENT_REPEAT = "RECENT_REPEAT"
+    ALREADY_TRADED = "ALREADY_TRADED"
     OLD_TRACKING = "OLD_TRACKING"
     RECHECK_CAUTION = "RECHECK_CAUTION"
 
 
-class TradeDecision(str, Enum):
+class TradeDecision(StrEnum):
     BUY = "BUY"
-    TRACK_ONLY = "TRACK_ONLY"
     SKIP = "SKIP"
+    TRACK_ONLY = "TRACK_ONLY"
 
 
-@dataclass
+@dataclass(slots=True)
 class MarketSnapshot:
     token_address: str
     dex_url: str | None
@@ -31,15 +36,15 @@ class MarketSnapshot:
     fetched_at: datetime
 
 
-@dataclass
+@dataclass(slots=True)
 class RiskResult:
     score: int
     blocked: bool
     reasons: list[str]
 
 
-@dataclass
+@dataclass(slots=True)
 class DecisionResult:
-    action: TradeDecision
+    decision: TradeDecision
     reasons: list[str]
-    paper_trade_amount: float  # 0 if SKIP or TRACK_ONLY
+    position_size_usd: float

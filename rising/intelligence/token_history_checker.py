@@ -1,15 +1,13 @@
 from __future__ import annotations
+
 from datetime import datetime
+
 from rising.models import SignalType
+from rising.storage.database import Database
 
 
 class TokenHistoryChecker:
-    def __init__(
-        self,
-        db,  # RisingDB or compatible
-        recent_repeat_minutes: int = 10,
-        old_address_minutes: int = 60,
-    ) -> None:
+    def __init__(self, db: Database, recent_repeat_minutes: int = 10, old_address_minutes: int = 60) -> None:
         self.db = db
         self.recent_repeat_minutes = recent_repeat_minutes
         self.old_address_minutes = old_address_minutes
@@ -22,7 +20,7 @@ class TokenHistoryChecker:
         first_seen = datetime.fromisoformat(token["first_seen_at"])
         age_minutes = (message_time - first_seen).total_seconds() / 60.0
 
-        if int(token.get("was_traded", 0)) == 1:
+        if int(token["was_traded"]) == 1:
             return SignalType.ALREADY_TRADED
         if age_minutes <= self.recent_repeat_minutes:
             return SignalType.RECENT_REPEAT

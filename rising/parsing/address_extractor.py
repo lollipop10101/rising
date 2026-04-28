@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import re
 
 # Solana base58 public keys are normally 32 bytes encoded as 32-44 chars.
