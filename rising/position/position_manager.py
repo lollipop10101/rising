@@ -16,19 +16,38 @@ class PositionManager:
             market = await self.price_client.get_solana_token(t["token_address"])
             if not market or market.price_usd is None or not t["entry_price"]:
                 continue
-            pnl_pct = ((market.price_usd - t["entry_price"]) / t["entry_price"]) * 100
-            pnl_usd = t["quote_usd"] * pnl_pct / 100
+
+            entry_price = t["entry_price"]
+            quote_usd = t["quote_usd"]
+
+            # Calculate PnL using paper_trader's realistic exit calc (includes fee)
+            _, pnl_pct, pnl_usd = self._calc_exit(market.price_usd, quote_usd, entry_price)
+
             entry_time = datetime.fromisoformat(t["entry_time"])
             age_min = (datetime.now(timezone.utc) - entry_time).total_seconds() / 60
             reason = None
+
             if pnl_pct <= self.cfg.stop_loss_pct:
-                reason = f"Stop loss hit {pnl_pct:.2f}%"
+                reason = f"Stop loss {pnl_pct:.1f}%"
             elif pnl_pct >= self.cfg.tp2_pct:
-                reason = f"TP2 hit {pnl_pct:.2f}%"
+                reason = f"TP2 {pnl_pct:.1f}%"
             elif age_min >= self.cfg.max_hold_minutes:
-                reason = f"Time exit after {age_min:.1f} min, pnl {pnl_pct:.2f}%"
+                reason = f"Time out {age_min:.0f}min, pnl {pnl_pct:.1f}%"
+
             if reason:
-                await self.db.close_trade(t["id"], market.price_usd, pnl_usd, pnl_pct, reason)
+                exit_price = market.price_usd * (1 - 1.0 / 100)  # exit with 1% fee
+                await self.db.close_trade(
+                    t["id"], exit_price, pnl_usd, pnl_pct, reason,
+                    market_price_at_exit=market.price_usd,
+                    slippage_pct_exit=1.0,
+                )
+
+    def _calc_exit(self, market_price: float, quote_usd: float, entry_price: float):
+        """Apply 1% exit fee to exit price."""
+        exit_price = market_price * (1 - 1.0 / 100)
+        pnl_pct = ((exit_price - entry_price) / entry_price) * 100
+        pnl_usd = quote_usd * pnl_pct / 100
+        return exit_price, pnl_pct, pnl_usd
 
     async def run_forever(self) -> None:
         while True:
