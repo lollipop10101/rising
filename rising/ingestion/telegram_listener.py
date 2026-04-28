@@ -10,7 +10,14 @@ MessageHandler = Callable[[str, str | None], Awaitable[None]]
 
 
 class TelegramSignalListener:
-    def __init__(self, api_id: int, api_hash: str, session: str, source_chat: str | int) -> None:
+    def __init__(
+        self,
+        api_id: int,
+        api_hash: str,
+        session: str,
+        source_chat: str | int,
+        bot_token: str | None = None,
+    ) -> None:
         self.client = TelegramClient(session, api_id, api_hash)
         self.source_chat = source_chat
 
