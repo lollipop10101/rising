@@ -74,7 +74,7 @@ TP2_SELL = float(_env("TP2_SELL_PCT", "exit.tp2_sell_pct", "30"))
 
 TELEGRAM_BOT_TOKEN = env.get("TELEGRAM_BOT_TOKEN", "")
 REPORT_BOT_TOKEN = TELEGRAM_BOT_TOKEN
-REPORT_CHAT_ID = env.get("TELEGRAM_REPORT_CHAT_ID", "")
+REPORT_CHAT_ID = env.get("TELEGRAM_REPORT_CHAT_ID", "387074917")
 POLL_SECONDS = int(_env("POLL_SECONDS", "exit.poll_seconds", "30"))
 
 db = Database(env.get("DATABASE_URL", "sqlite:///data/rising.db"))
@@ -102,6 +102,9 @@ async def send(text: str) -> None:
     if not TELEGRAM_BOT_TOKEN:
         print(f"  [Telegram WARNING] no bot token configured, skipping send")
         return
+    if not REPORT_CHAT_ID:
+        print(f"  [Telegram WARNING] no report chat_id configured, skipping send")
+        return
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.post(
@@ -109,7 +112,11 @@ async def send(text: str) -> None:
                 json={"chat_id": REPORT_CHAT_ID, "text": text},
             )
             ok = r.json().get("ok", False)
-            print(f"  Telegram → {'OK' if ok else r.json().get('description', '?')}")
+            if ok:
+                print(f"  Telegram → OK (chat_id={REPORT_CHAT_ID})")
+            else:
+                err = r.json().get("description", "?")
+                print(f"  Telegram → FAILED: {err}")
     except Exception as e:
         print(f"  Telegram error: {e}")
 
@@ -169,10 +176,14 @@ async def run() -> None:
                 await positions.evaluate_trade(trade, snapshot.price_usd, datetime.now(timezone.utc))
         except Exception as e:
             print(f"Monitor error: {e}")
+    # Cancel the Telegram listener first, then wait for it to clean up
+    bot_task.cancel()
     try:
         await bot_task
     except asyncio.CancelledError:
         pass
+    except Exception as e:
+        print(f"  Listener cleanup: {e}")
 
     # Final report
     with db.connect() as conn:
