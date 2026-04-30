@@ -48,12 +48,12 @@ history_checker = TokenHistoryChecker()
 risk_engine = RiskEngine(min_liquidity_usd=MIN_LIQUIDITY_USD, max_risk_score=MAX_RISK_SCORE)
 strategy = StrategyEngine()
 paper_trader = PaperTrader(db, QUOTE_USD)
-position_manager = PositionManager(db, price_client, type('Cfg', (), {
+position_manager = PositionManager(db, type('Cfg', (), {
     'stop_loss_pct': STOP_LOSS_PCT,
     'tp2_pct': TP2_PCT,
     'max_hold_minutes': MAX_HOLD_MINUTES,
     'poll_seconds': POLL_SECONDS,
-})())
+})(), price_client, min_liquidity_usd=MIN_LIQUIDITY_USD)
 
 # ── Token handler ────────────────────────────────────────────────────────────
 

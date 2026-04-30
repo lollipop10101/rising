@@ -48,6 +48,8 @@ class RisingApp:
                 tp2_sell_pct=float(nested_get(self.config, "exit.tp2_sell_pct", 30)),
                 max_hold_minutes=float(nested_get(self.config, "exit.max_hold_minutes", 20)),
             ),
+            self.price,
+            min_liquidity_usd=float(nested_get(self.config, "risk.min_liquidity_usd", 5000)),
         )
         self.notifier = TelegramNotifier(env.telegram_bot_token, env.telegram_report_chat_id)
 

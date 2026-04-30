@@ -17,11 +17,22 @@ class ExitConfig:
 
 
 class PositionManager:
-    def __init__(self, db: Database, config: ExitConfig) -> None:
+    def __init__(self, db: Database, config: ExitConfig, price_client, min_liquidity_usd: float = 5000) -> None:
         self.db = db
         self.config = config
+        self.price_client = price_client
+        self.min_liquidity_usd = min_liquidity_usd
 
     def evaluate_trade(self, trade, current_price: float, now: datetime) -> str | None:
+        # Fetch current liquidity
+        snapshot = self.price_client.fetch_token(trade['token_address'])
+        liquidity = snapshot.liquidity_usd if snapshot else None
+
+        # Advisory: if liquidity is below threshold, flag but don't block
+        if liquidity is not None and liquidity < self.min_liquidity_usd:
+            self.db.add_trade_event(int(trade["id"]), "LIQUIDITY_CHECK", now, current_price, 0, 0.0,
+                f"liquidity ${liquidity:,.0f} below min ${self.min_liquidity_usd:,.0f}, exit may not be realizable")
+
         entry = float(trade["entry_price"])
         remaining = float(trade["remaining_pct"])
         realized = float(trade["realized_pnl_usd"])

@@ -56,9 +56,12 @@ strategy = StrategyEngine(paper_trade_usd=QUOTE_USD, max_risk_score=MAX_RISK)
 paper = PaperTrader(db)
 positions = PositionManager(db, ExitConfig(
     stop_loss_pct=STOP_LOSS,
+    tp1_pct=float(env.get("TP1_PCT", "25")),
+    tp1_sell_pct=float(env.get("TP1_SELL_PCT", "50")),
     tp2_pct=TP2,
+    tp2_sell_pct=float(env.get("TP2_SELL_PCT", "30")),
     max_hold_minutes=MAX_HOLD,
-))
+), price, min_liquidity_usd=MIN_LIQ)
 
 trade_taken = 0
 skipped = 0
@@ -109,14 +112,9 @@ async def handler(text: str, chat_id: str | None) -> None:
     if decision.decision == TradeDecision.BUY and snapshot.price_usd:
         trade_id = paper.buy(address, snapshot.price_usd, decision.position_size_usd, now)
         trade_taken += 1
-        await send(
-            f"🟢 Rising BUY\nTrade #{trade_id}\n${sym}\nEntry: {price_str}\n"
-            f"Liq: ${liq:,.0f} | Vol5m: ${vol5m:,.0f}\n"
-            f"Risk: {risk_result.score} | Size: ${decision.position_size_usd}"
-        )
+        # Silent — no per-trade alerts; summary only every 4 hours
     else:
         skipped += 1
-        await send(f"⚪ SKIP | ${sym} | {reason_str}")
 
 # ── Main 2-hour session ────────────────────────────────────────────────────
 
@@ -126,16 +124,16 @@ async def run() -> None:
         f"Min Liq: ${MIN_LIQ:,.0f} | Vol5m: ${MIN_VOL:,.0f}\n"
         f"Risk max: {MAX_RISK} | Max open: {MAX_OPEN}\n"
         f"Quote: ${QUOTE_USD}/trade | Stop: {STOP_LOSS}%\n"
-        f"Report in ~2 hours."
+        f"Report in ~4 hours."
     )
-    print("[Rising 2-hour session starting]")
+    print("[Rising session starting — 4h, silent trades]")
 
     # Use user session only (no bot token) — whale auth, IN Degen_TH
     listener = TelegramSignalListener(api_id, api_hash, session, source_chat, bot_token=None)
     bot_task = asyncio.create_task(listener.run(handler))
 
     poll = int(env.get("POLL_SECONDS", "30"))
-    end_time = datetime.now(timezone.utc).timestamp() + 2 * 60 * 60
+    end_time = datetime.now(timezone.utc).timestamp() + 4 * 60 * 60
 
     while datetime.now(timezone.utc).timestamp() < end_time:
         await asyncio.sleep(poll)
@@ -144,16 +142,9 @@ async def run() -> None:
                 snapshot = await price.fetch_token(trade["token_address"])
                 if not snapshot.price_usd:
                     continue
-                event = positions.evaluate_trade(trade, snapshot.price_usd, datetime.now(timezone.utc))
-                if event:
-                    await send(
-                        f"📍 Exit {event['reason']} | Trade #{trade['id']} | "
-                        f"${snapshot.price_usd:.8f} | PnL: ${event.get('pnl_usd', 0):.2f}"
-                    )
+                positions.evaluate_trade(trade, snapshot.price_usd, datetime.now(timezone.utc))
         except Exception as e:
             print(f"Monitor error: {e}")
-
-    bot_task.cancel()
     try:
         await bot_task
     except asyncio.CancelledError:
