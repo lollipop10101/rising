@@ -92,6 +92,11 @@ class Database:
                     note TEXT
                 );
 
+                CREATE TABLE IF NOT EXISTS paper_state (
+                    key TEXT PRIMARY KEY,
+                    value TEXT
+                );
+
                 CREATE TABLE IF NOT EXISTS smart_wallets (
                     wallet_address TEXT PRIMARY KEY,
                     label TEXT,
@@ -138,6 +143,22 @@ class Database:
                     paper_trade_id INTEGER
                 );
                 """
+            )
+
+    def get_paper_balance(self, default_balance: float) -> float:
+        with self.connect() as conn:
+            row = conn.execute("SELECT value FROM paper_state WHERE key='balance'").fetchone()
+            if row is None or row["value"] in (None, ""):
+                self.set_paper_balance(default_balance)
+                return default_balance
+            return float(row["value"])
+
+    def set_paper_balance(self, balance: float) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """INSERT INTO paper_state(key, value) VALUES('balance', ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value""",
+                (str(balance),),
             )
 
     def get_token(self, token_address: str) -> sqlite3.Row | None:

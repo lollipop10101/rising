@@ -34,10 +34,14 @@ class RisingApp:
             max_pump_5m_pct=float(nested_get(self.config, "risk.max_pump_5m_pct", 200)),
         )
         self.strategy = StrategyEngine(
-            paper_trade_usd=float(nested_get(self.config, "trading.paper_trade_usd", 15)),
+            allocation_pct=float(nested_get(self.config, "trading.allocation_pct", 0.1)),
             max_risk_score=int(nested_get(self.config, "risk.max_risk_score", 70)),
         )
-        self.paper = PaperTrader(self.db)
+        self.paper = PaperTrader(
+            self.db,
+            default_balance=float(nested_get(self.config, "trading.paper_balance", 100)),
+            balance_floor=float(nested_get(self.config, "trading.paper_balance_floor", 50)),
+        )
         self.positions = PositionManager(
             self.db,
             ExitConfig(
@@ -49,6 +53,7 @@ class RisingApp:
                 max_hold_minutes=float(nested_get(self.config, "exit.max_hold_minutes", 20)),
             ),
             self.price,
+            self.paper,
             min_liquidity_usd=float(nested_get(self.config, "risk.min_liquidity_usd", 5000)),
         )
         self.notifier = TelegramNotifier(env.telegram_bot_token, env.telegram_report_chat_id)
@@ -71,7 +76,7 @@ class RisingApp:
         risk = self.risk.score(snapshot)
         open_positions = len(self.db.get_open_trades())
         max_open = int(nested_get(self.config, "trading.max_open_positions", 3))
-        decision = self.strategy.decide(signal_type, risk, open_positions, max_open)
+        decision = self.strategy.decide(signal_type, risk, open_positions, max_open, self.paper.get_balance())
 
         logger.info("{} signal={} risk={} decision={} reasons={}", token_address, signal_type, risk.score, decision.decision, decision.reasons)
 

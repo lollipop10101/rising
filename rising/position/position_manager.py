@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+from rising.execution.paper_trader import PaperTrader
 from rising.storage.database import Database
 
 
@@ -17,10 +18,11 @@ class ExitConfig:
 
 
 class PositionManager:
-    def __init__(self, db: Database, config: ExitConfig, price_client, min_liquidity_usd: float = 5000) -> None:
+    def __init__(self, db: Database, config: ExitConfig, price_client, paper: PaperTrader, min_liquidity_usd: float = 5000) -> None:
         self.db = db
         self.config = config
         self.price_client = price_client
+        self.paper = paper
         self.min_liquidity_usd = min_liquidity_usd
 
     async def evaluate_trade(self, trade, current_price: float, now: datetime) -> str | None:
@@ -45,13 +47,17 @@ class PositionManager:
         if pnl_pct <= self.config.stop_loss_pct:
             pnl = self._pnl_for_pct(size, remaining, pnl_pct)
             self.db.add_trade_event(trade_id, "STOP_LOSS", now, current_price, remaining, pnl, "full exit")
-            self.db.update_trade(trade_id, 0.0, realized + pnl, "CLOSED", now, "STOP_LOSS", current_price)
+            new_realized = realized + pnl
+            self.db.update_trade(trade_id, 0.0, new_realized, "CLOSED", now, "STOP_LOSS", current_price)
+            self.paper.close_trade_for_balance(trade_id, pnl)
             return "STOP_LOSS"
 
         if age_min >= self.config.max_hold_minutes:
             pnl = self._pnl_for_pct(size, remaining, pnl_pct)
             self.db.add_trade_event(trade_id, "TIME_EXIT", now, current_price, remaining, pnl, "full exit")
-            self.db.update_trade(trade_id, 0.0, realized + pnl, "CLOSED", now, "TIME_EXIT", current_price)
+            new_realized = realized + pnl
+            self.db.update_trade(trade_id, 0.0, new_realized, "CLOSED", now, "TIME_EXIT", current_price)
+            self.paper.close_trade_for_balance(trade_id, pnl)
             return "TIME_EXIT"
 
         # TP2 first in case price jumps past both thresholds.
@@ -62,6 +68,8 @@ class PositionManager:
             self.db.add_trade_event(trade_id, "TP2", now, current_price, qty, pnl, "partial exit")
             status = "MOONBAG" if new_remaining > 0 else "CLOSED"
             self.db.update_trade(trade_id, new_remaining, realized + pnl, status, None if new_remaining > 0 else now, "TP2" if new_remaining == 0 else None, current_price)
+            if status == "CLOSED":
+                self.paper.close_trade_for_balance(trade_id, pnl)
             return "TP2"
 
         if pnl_pct >= self.config.tp1_pct and remaining > (100 - self.config.tp1_sell_pct):

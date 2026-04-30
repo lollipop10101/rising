@@ -62,7 +62,9 @@ MIN_VOL = float(_env("MIN_VOLUME_5M_USD", "risk.min_volume_5m_usd", "500"))
 MAX_PUMP = float(_env("MAX_PUMP_5M_PCT", "risk.max_pump_5m_pct", "200"))
 MAX_RISK = int(_env("MAX_RISK_SCORE", "risk.max_risk_score", "70"))
 MAX_OPEN = int(_env("MAX_OPEN_POSITIONS", "trading.max_open_positions", "3"))
-QUOTE_USD = float(_env("QUOTE_USD", "trading.paper_trade_usd", "15"))
+PAPER_BALANCE = float(_env("PAPER_BALANCE", "trading.paper_balance", "100"))
+ALLOCATION_PCT = float(_env("ALLOCATION_PCT", "trading.allocation_pct", "0.1"))
+PAPER_BALANCE_FLOOR = float(_env("PAPER_BALANCE_FLOOR", "trading.paper_balance_floor", "50"))
 STOP_LOSS = float(_env("STOP_LOSS_PCT", "exit.stop_loss_pct", "-30"))
 TP2 = float(_env("TP2_PCT", "exit.tp2_pct", "75"))
 MAX_HOLD = float(_env("MAX_HOLD_MINUTES", "exit.max_hold_minutes", "20"))
@@ -79,8 +81,8 @@ db = Database(env.get("DATABASE_URL", "sqlite:///data/rising.db"))
 price = DexScreenerClient()
 history = TokenHistoryChecker(db)
 risk_engine = RiskEngine(min_liquidity_usd=MIN_LIQ, min_volume_5m_usd=MIN_VOL, max_pump_5m_pct=MAX_PUMP)
-strategy = StrategyEngine(paper_trade_usd=QUOTE_USD, max_risk_score=MAX_RISK)
-paper = PaperTrader(db)
+strategy = StrategyEngine(allocation_pct=ALLOCATION_PCT, max_risk_score=MAX_RISK)
+paper = PaperTrader(db, default_balance=PAPER_BALANCE, balance_floor=PAPER_BALANCE_FLOOR)
 positions = PositionManager(db, ExitConfig(
     stop_loss_pct=STOP_LOSS,
     tp1_pct=TP1,
@@ -88,7 +90,7 @@ positions = PositionManager(db, ExitConfig(
     tp2_pct=TP2,
     tp2_sell_pct=TP2_SELL,
     max_hold_minutes=MAX_HOLD,
-), price, min_liquidity_usd=MIN_LIQ)
+), price, paper, min_liquidity_usd=MIN_LIQ)
 
 trade_taken = 0
 skipped = 0
@@ -131,7 +133,7 @@ async def handler(text: str, chat_id: str | None) -> None:
 
     risk_result = risk_engine.score(snapshot)
     open_pos = len(db.get_open_trades())
-    decision = strategy.decide(signal_type, risk_result, open_pos, MAX_OPEN)
+    decision = strategy.decide(signal_type, risk_result, open_pos, MAX_OPEN, paper.get_balance())
 
     if decision.decision == TradeDecision.BUY and snapshot.price_usd:
         trade_id = paper.buy(address, snapshot.price_usd, decision.position_size_usd, now)
@@ -146,7 +148,7 @@ async def run() -> None:
         f"Rising started\nSource: {source_chat}\n"
         f"Min Liq: ${MIN_LIQ:,.0f} | Vol5m: ${MIN_VOL:,.0f}\n"
         f"Risk max: {MAX_RISK} | Max open: {MAX_OPEN}\n"
-        f"Quote: ${QUOTE_USD}/trade | Stop: {STOP_LOSS}%\n"
+        f"Paper: ${paper.get_balance():.2f} | Alloc: {ALLOCATION_PCT * 100:.0f}% | Stop: {STOP_LOSS}%\n"
         f"Report in ~4 hours."
     )
     print("[Rising session starting — 4h, silent trades]")

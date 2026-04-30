@@ -64,7 +64,9 @@ MIN_VOL = float(env.get("MIN_VOLUME_5M_USD", _cfg("risk.min_volume_5m_usd", "500
 MAX_PUMP = float(env.get("MAX_PUMP_5M_PCT", _cfg("risk.max_pump_5m_pct", "200")))
 MAX_RISK = int(env.get("MAX_RISK_SCORE", _cfg("risk.max_risk_score", "70")))
 MAX_OPEN = int(env.get("MAX_OPEN_POSITIONS", _cfg("trading.max_open_positions", "3")))
-QUOTE_USD = float(env.get("QUOTE_USD", _cfg("trading.paper_trade_usd", "15")))
+PAPER_BALANCE = float(env.get("PAPER_BALANCE", _cfg("trading.paper_balance", "100")))
+ALLOCATION_PCT = float(env.get("ALLOCATION_PCT", _cfg("trading.allocation_pct", "0.1")))
+PAPER_BALANCE_FLOOR = float(env.get("PAPER_BALANCE_FLOOR", _cfg("trading.paper_balance_floor", "50")))
 STOP_LOSS = float(env.get("STOP_LOSS_PCT", _cfg("exit.stop_loss_pct", "-30")))
 TP1 = float(env.get("TP1_PCT", _cfg("exit.tp1_pct", "25")))
 TP2 = float(env.get("TP2_PCT", _cfg("exit.tp2_pct", "75")))
@@ -82,8 +84,8 @@ db = Database(DB_URL)
 price = DexScreenerClient()
 history = TokenHistoryChecker(db)
 risk_engine = RiskEngine(min_liquidity_usd=MIN_LIQ, min_volume_5m_usd=MIN_VOL, max_pump_5m_pct=MAX_PUMP)
-strategy = StrategyEngine(paper_trade_usd=QUOTE_USD, max_risk_score=MAX_RISK)
-paper = PaperTrader(db)
+strategy = StrategyEngine(allocation_pct=ALLOCATION_PCT, max_risk_score=MAX_RISK)
+paper = PaperTrader(db, default_balance=PAPER_BALANCE, balance_floor=PAPER_BALANCE_FLOOR)
 positions = PositionManager(db, ExitConfig(
     stop_loss_pct=STOP_LOSS,
     tp1_pct=TP1,
@@ -91,7 +93,7 @@ positions = PositionManager(db, ExitConfig(
     tp2_pct=TP2,
     tp2_sell_pct=float(env.get("TP2_SELL_PCT", _cfg("exit.tp2_sell_pct", "30"))),
     max_hold_minutes=MAX_HOLD,
-), price, min_liquidity_usd=MIN_LIQ)
+), price, paper, min_liquidity_usd=MIN_LIQ)
 
 
 # ── Telegram message handler ──────────────────────────────────────────────────
@@ -121,7 +123,7 @@ async def handle_message(text: str, chat: str | None) -> None:
 
         # Trading decision
         open_pos = len(db.get_open_trades())
-        decision = strategy.decide(signal_type, risk, open_positions=open_pos, max_open_positions=MAX_OPEN)
+        decision = strategy.decide(signal_type, risk, open_positions=open_pos, max_open_positions=MAX_OPEN, paper_balance=paper.get_balance())
 
         print(f"    {address[:16]}.. | signal={signal_type.value} | risk={risk.score} | decision={decision.decision.value}")
 
@@ -192,7 +194,7 @@ def check() -> int:
         ("DexScreenerClient", price),
         ("TokenHistoryChecker(db)", history),
         ("RiskEngine(min_liq, min_vol, max_pump)", risk_engine),
-        ("StrategyEngine(paper_trade_usd, max_risk)", strategy),
+        ("StrategyEngine(allocation_pct, max_risk)", strategy),
         ("PaperTrader(db)", paper),
         ("PositionManager(db, ExitConfig, price, min_liq)", positions),
     ]

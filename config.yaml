@@ -1,5 +1,7 @@
 trading:
-  paper_trade_usd: 15
+  paper_balance: 100
+  allocation_pct: 0.1
+  paper_balance_floor: 50
   max_open_positions: 3
   max_daily_loss_usd: 50
 

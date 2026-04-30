@@ -49,7 +49,7 @@ class CopySignalEngine:
             return CopySignalResult(CopyDecision.SKIP, ["token risk blocked", *risk.reasons[:3]], score)
 
         open_positions = len(self.db.get_open_trades())
-        decision = self.strategy.decide_signal_only(risk=risk, open_positions=open_positions, max_open=self.max_open)
+        decision = self.strategy.decide_signal_only(risk=risk, open_positions=open_positions, max_open=self.max_open, paper_balance=self.paper.get_balance())
         if decision.decision != TradeDecision.BUY or not snapshot.price_usd:
             return CopySignalResult(CopyDecision.ALERT_ONLY, decision.reasons, score)
 
