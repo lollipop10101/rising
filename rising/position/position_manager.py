@@ -23,9 +23,9 @@ class PositionManager:
         self.price_client = price_client
         self.min_liquidity_usd = min_liquidity_usd
 
-    def evaluate_trade(self, trade, current_price: float, now: datetime) -> str | None:
+    async def evaluate_trade(self, trade, current_price: float, now: datetime) -> str | None:
         # Fetch current liquidity
-        snapshot = self.price_client.fetch_token(trade['token_address'])
+        snapshot = await self.price_client.fetch_token(trade['token_address'])
         liquidity = snapshot.liquidity_usd if snapshot else None
 
         # Advisory: if liquidity is below threshold, flag but don't block

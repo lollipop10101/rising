@@ -142,7 +142,7 @@ async def run() -> None:
                 snapshot = await price.fetch_token(trade["token_address"])
                 if not snapshot.price_usd:
                     continue
-                positions.evaluate_trade(trade, snapshot.price_usd, datetime.now(timezone.utc))
+                await positions.evaluate_trade(trade, snapshot.price_usd, datetime.now(timezone.utc))
         except Exception as e:
             print(f"Monitor error: {e}")
     try:

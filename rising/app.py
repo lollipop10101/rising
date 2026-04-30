@@ -90,7 +90,7 @@ class RisingApp:
             snapshot = await self.price.fetch_token(trade["token_address"])
             if not snapshot.price_usd:
                 continue
-            event = self.positions.evaluate_trade(trade, snapshot.price_usd, utc_now())
+            event = await self.positions.evaluate_trade(trade, snapshot.price_usd, utc_now())
             if event:
                 await self.notifier.send(f"📍 Rising exit event: {event}\nToken: {trade['token_address']}\nPrice: ${snapshot.price_usd}")
 
