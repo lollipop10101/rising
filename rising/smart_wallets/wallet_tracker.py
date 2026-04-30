@@ -44,7 +44,7 @@ class SmartWalletTracker:
         swaps = await self.helius.fetch_swaps(wallet_address, limit=10)
         if not swaps:
             return
-        score = await self.analyzer.analyze_wallet(wallet_address, limit=50)
+        score = await self.analyzer.analyze_wallet(wallet_address, swaps=swaps)
 
         # Process newest first, but only unseen signatures.
         for swap in sorted(swaps, key=lambda s: s.timestamp):

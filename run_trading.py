@@ -2,7 +2,7 @@
 """
 Rising — Telegram signal listener + paper trader
 Handles Degen-TH signals, checks risk, paper-trades.
-Report after ~2 hours.
+Report after ~4 hours.
 """
 from __future__ import annotations
 import sys, os, asyncio, sqlite3, yaml
@@ -30,16 +30,25 @@ env = os.environ
 
 # ── Load shared config ──────────────────────────────────────────────
 
-_config = yaml.safe_load(Path("config.yaml").read_text(encoding="utf-8")) or {}
+_yaml_config = yaml.safe_load(Path("config.yaml").read_text(encoding="utf-8")) or {}
 
 def _cfg(path: str, default=None):
-    parts = path.split(".")
-    cur = _config
-    for p in parts:
+    cur = _yaml_config
+    for p in path.split("."):
         if isinstance(cur, dict) and p in cur:
             cur = cur[p]
         else:
             return default
+    return cur
+
+def _env(key: str, cfg_path: str, default: str) -> str:
+    val = env.get(key, "")
+    if val:
+        return val
+    cv = _cfg(cfg_path)
+    if cv is not None:
+        return str(cv)
+    return default
 
 # ── Config ────────────────────────────────────────────────────────────
 
@@ -48,20 +57,23 @@ api_hash = env.get("TELEGRAM_API_HASH", "")
 session = env.get("TELEGRAM_SESSION", "rising_test")
 source_chat = env.get("TELEGRAM_SOURCE_CHAT", "Degen_TH")
 
-MIN_LIQ = float(env.get("MIN_LIQUIDITY_USD", _cfg("risk.min_liquidity_usd", "5000")))
-MIN_VOL = float(env.get("MIN_VOLUME_5M_USD", _cfg("risk.min_volume_5m_usd", "500")))
-MAX_PUMP = float(env.get("MAX_PUMP_5M_PCT", _cfg("risk.max_pump_5m_pct", "200")))
-MAX_RISK = int(env.get("MAX_RISK_SCORE", _cfg("risk.max_risk_score", "70")))
-MAX_OPEN = int(env.get("MAX_OPEN_POSITIONS", _cfg("trading.max_open_positions", "3")))
-QUOTE_USD = float(env.get("QUOTE_USD", _cfg("trading.paper_trade_usd", "15")))
-STOP_LOSS = float(env.get("STOP_LOSS_PCT", _cfg("exit.stop_loss_pct", "-30")))
-TP2 = float(env.get("TP2_PCT", _cfg("exit.tp2_pct", "75")))
-MAX_HOLD = float(env.get("MAX_HOLD_MINUTES", _cfg("exit.max_hold_minutes", "20")))
+MIN_LIQ = float(_env("MIN_LIQUIDITY_USD", "risk.min_liquidity_usd", "5000"))
+MIN_VOL = float(_env("MIN_VOLUME_5M_USD", "risk.min_volume_5m_usd", "500"))
+MAX_PUMP = float(_env("MAX_PUMP_5M_PCT", "risk.max_pump_5m_pct", "200"))
+MAX_RISK = int(_env("MAX_RISK_SCORE", "risk.max_risk_score", "70"))
+MAX_OPEN = int(_env("MAX_OPEN_POSITIONS", "trading.max_open_positions", "3"))
+QUOTE_USD = float(_env("QUOTE_USD", "trading.paper_trade_usd", "15"))
+STOP_LOSS = float(_env("STOP_LOSS_PCT", "exit.stop_loss_pct", "-30"))
+TP2 = float(_env("TP2_PCT", "exit.tp2_pct", "75"))
+MAX_HOLD = float(_env("MAX_HOLD_MINUTES", "exit.max_hold_minutes", "20"))
+TP1 = float(_env("TP1_PCT", "exit.tp1_pct", "25"))
+TP1_SELL = float(_env("TP1_SELL_PCT", "exit.tp1_sell_pct", "50"))
+TP2_SELL = float(_env("TP2_SELL_PCT", "exit.tp2_sell_pct", "30"))
 
 TELEGRAM_BOT_TOKEN = env.get("TELEGRAM_BOT_TOKEN", "")
 REPORT_BOT_TOKEN = TELEGRAM_BOT_TOKEN
 REPORT_CHAT_ID = env.get("TELEGRAM_REPORT_CHAT_ID", "")
-POLL_SECONDS = int(env.get("POLL_SECONDS", _cfg("exit.poll_seconds", "30") or "30"))
+POLL_SECONDS = int(_env("POLL_SECONDS", "exit.poll_seconds", "30"))
 
 db = Database(env.get("DATABASE_URL", "sqlite:///data/rising.db"))
 price = DexScreenerClient()
@@ -71,30 +83,27 @@ strategy = StrategyEngine(paper_trade_usd=QUOTE_USD, max_risk_score=MAX_RISK)
 paper = PaperTrader(db)
 positions = PositionManager(db, ExitConfig(
     stop_loss_pct=STOP_LOSS,
-    tp1_pct=float(env.get("TP1_PCT", _cfg("exit.tp1_pct", "25"))),
-    tp1_sell_pct=float(env.get("TP1_SELL_PCT", _cfg("exit.tp1_sell_pct", "50"))),
+    tp1_pct=TP1,
+    tp1_sell_pct=TP1_SELL,
     tp2_pct=TP2,
-    tp2_sell_pct=float(env.get("TP2_SELL_PCT", _cfg("exit.tp2_sell_pct", "30"))),
+    tp2_sell_pct=TP2_SELL,
     max_hold_minutes=MAX_HOLD,
 ), price, min_liquidity_usd=MIN_LIQ)
 
 trade_taken = 0
 skipped = 0
 
-# ── Helpers ──────────────────────────────────────────────────────────
+# ── Helpers ─────────────────────────────────────────────────────────────────
 
 async def send(text: str) -> None:
     import httpx
-    if not REPORT_BOT_TOKEN:
-        print("  [Telegram] no bot token configured, skipping send")
-        return
-    if not REPORT_CHAT_ID:
-        print("  [Telegram] no report chat id, skipping send")
+    if not TELEGRAM_BOT_TOKEN:
+        print(f"  [Telegram WARNING] no bot token configured, skipping send")
         return
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.post(
-                f"https://api.telegram.org/bot{REPORT_BOT_TOKEN}/sendMessage",
+                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
                 json={"chat_id": REPORT_CHAT_ID, "text": text},
             )
             ok = r.json().get("ok", False)
@@ -106,7 +115,7 @@ def is_signal(text: str) -> bool:
     """Message contains at least one SOL address → treat as signal."""
     return len(extract_solana_addresses(text)) >= 1
 
-# ── Message handler ──────────────────────────────────────────────────
+# ── Message handler ────────────────────────────────────────────────────────
 
 async def handler(text: str, chat_id: str | None) -> None:
     global trade_taken, skipped
@@ -124,19 +133,13 @@ async def handler(text: str, chat_id: str | None) -> None:
     open_pos = len(db.get_open_trades())
     decision = strategy.decide(signal_type, risk_result, open_pos, MAX_OPEN)
 
-    sym = snapshot.base_symbol or "???"
-    liq = snapshot.liquidity_usd or 0
-    vol5m = snapshot.volume_5m_usd or 0
-    price_str = f"${snapshot.price_usd:.8f}" if snapshot.price_usd else "?"
-    reason_str = "; ".join(decision.reasons[:4])
-
     if decision.decision == TradeDecision.BUY and snapshot.price_usd:
         trade_id = paper.buy(address, snapshot.price_usd, decision.position_size_usd, now)
         trade_taken += 1
     else:
         skipped += 1
 
-# ── Main session ─────────────────────────────────────────────────────
+# ── Main 4-hour session ────────────────────────────────────────────────────
 
 async def run() -> None:
     await send(

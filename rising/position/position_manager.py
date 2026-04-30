@@ -68,7 +68,7 @@ class PositionManager:
             qty = min(self.config.tp1_sell_pct, remaining)
             pnl = self._pnl_for_pct(size, qty, pnl_pct)
             self.db.add_trade_event(trade_id, "TP1", now, current_price, qty, pnl, "partial exit")
-            self.db.update_trade(trade_id, remaining - qty, realized + pnl)
+            self.db.update_trade(trade_id, remaining - qty, realized + pnl, closed_at=None, exit_reason=None)
             return "TP1"
 
         return None

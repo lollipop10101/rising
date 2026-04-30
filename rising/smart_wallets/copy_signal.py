@@ -11,11 +11,6 @@ from rising.smart_wallets.models import CopyDecision, CopySignalResult, WalletSc
 from rising.storage.database import Database
 from rising.strategy.trade_decision import StrategyEngine
 
-# Load config for max_open_positions
-_config = yaml.safe_load(Path("config.yaml").read_text(encoding="utf-8")) if Path("config.yaml").exists() else {}
-_MAX_OPEN = int(_config.get("trading", {}).get("max_open_positions", "3") or "3")
-
-
 class CopySignalEngine:
     def __init__(
         self,
@@ -24,11 +19,13 @@ class CopySignalEngine:
         risk_engine: RiskEngine,
         strategy: StrategyEngine,
         paper: PaperTrader,
+        max_open: int = 3,
         min_wallet_score: int = 70,
         min_copyability_score: int = 60,
         alert_only_for_single_wallet: bool = False,
     ) -> None:
         self.db = db
+        self.max_open = max_open
         self.price = price_client
         self.risk = risk_engine
         self.strategy = strategy
@@ -52,7 +49,7 @@ class CopySignalEngine:
             return CopySignalResult(CopyDecision.SKIP, ["token risk blocked", *risk.reasons[:3]], score)
 
         open_positions = len(self.db.get_open_trades())
-        decision = self.strategy.decide_signal_only(risk=risk, open_positions=open_positions, max_open=_MAX_OPEN)
+        decision = self.strategy.decide_signal_only(risk=risk, open_positions=open_positions, max_open=self.max_open)
         if decision.decision != TradeDecision.BUY or not snapshot.price_usd:
             return CopySignalResult(CopyDecision.ALERT_ONLY, decision.reasons, score)
 

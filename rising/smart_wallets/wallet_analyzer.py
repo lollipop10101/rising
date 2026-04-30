@@ -16,8 +16,8 @@ class WalletAnalyzer:
         self.scorer = WalletScorer()
         self.insider = InsiderFilter()
 
-    async def analyze_wallet(self, wallet_address: str, limit: int = 50) -> WalletScore:
-        swaps = await self.helius.fetch_swaps(wallet_address, limit=limit)
+    async def analyze_wallet(self, wallet_address: str, limit: int = 50, swaps: WalletSwap | list[WalletSwap] | None = None) -> WalletScore:
+        swaps = list(swaps) if swaps else await self.helius.fetch_swaps(wallet_address, limit=limit)
         for swap in swaps:
             self.db.upsert_wallet_trade(swap)
 
