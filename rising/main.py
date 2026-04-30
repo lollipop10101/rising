@@ -17,11 +17,6 @@ load_dotenv()
 
 from datetime import datetime, timezone
 from pathlib import Path
-
-# Resolve project root for imports
-PROJECT_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
-
 from rising.storage.database import Database
 from rising.data.price_fetcher import DexScreenerClient
 from rising.ingestion.telegram_listener import TelegramSignalListener
@@ -31,37 +26,57 @@ from rising.strategy.trade_decision import StrategyEngine
 from rising.execution.paper_trader import PaperTrader
 from rising.position.position_manager import PositionManager, ExitConfig
 from rising.parsing.address_extractor import extract_solana_addresses
-from rising.models import SignalType
+
+# Resolve project root for imports
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+# ── Load shared config section ────────────────────────────────────────────────
+
+import yaml
+_config = yaml.safe_load(Path("config.yaml").read_text(encoding="utf-8")) or {}
 
 
-# ── Config from env ─────────────────────────────────────────────────────────
+def _cfg(path: str, default=None):
+    parts = path.split(".")
+    cur = _config
+    for p in parts:
+        if isinstance(cur, dict) and p in cur:
+            cur = cur[p]
+        else:
+            return default
+    return cur
+
+
+# ── Config from env & shared config ─────────────────────────────────────────────
 
 env = os.environ
 
-api_id_str = env.get("TELEGRAM_API_ID", "0") or "0"
-api_id = int(api_id_str) if api_id_str not in ("", "0") else 0
+api_id_str = env.get("TELEGRAM_API_ID", "") or "0"
+api_id = int(env.get("TELEGRAM_API_ID", "0") or "0")
 api_hash = env.get("TELEGRAM_API_HASH", "")
 session = env.get("TELEGRAM_SESSION", "rising_test")
 source_chat = env.get("TELEGRAM_SOURCE_CHAT", "Degen_TH")
 bot_token = env.get("TELEGRAM_BOT_TOKEN", "")
 
-MIN_LIQ = float(env.get("MIN_LIQUIDITY_USD", "5000"))
-MIN_VOL = float(env.get("MIN_VOLUME_5M_USD", "500"))
-MAX_PUMP = float(env.get("MAX_PUMP_5M_PCT", "200"))
-MAX_RISK = int(env.get("MAX_RISK_SCORE", "70"))
-MAX_OPEN = int(env.get("MAX_OPEN_POSITIONS", "3"))
-QUOTE_USD = float(env.get("QUOTE_USD", "15"))
-STOP_LOSS = float(env.get("STOP_LOSS_PCT", "-30"))
-TP1 = float(env.get("TP1_PCT", "25"))
-TP2 = float(env.get("TP2_PCT", "75"))
-MAX_HOLD = float(env.get("MAX_HOLD_MINUTES", "20"))
+MIN_LIQ = float(env.get("MIN_LIQUIDITY_USD", _cfg("risk.min_liquidity_usd", "5000")))
+MIN_VOL = float(env.get("MIN_VOLUME_5M_USD", _cfg("risk.min_volume_5m_usd", "500")))
+MAX_PUMP = float(env.get("MAX_PUMP_5M_PCT", _cfg("risk.max_pump_5m_pct", "200")))
+MAX_RISK = int(env.get("MAX_RISK_SCORE", _cfg("risk.max_risk_score", "70")))
+MAX_OPEN = int(env.get("MAX_OPEN_POSITIONS", _cfg("trading.max_open_positions", "3")))
+QUOTE_USD = float(env.get("QUOTE_USD", _cfg("trading.paper_trade_usd", "15")))
+STOP_LOSS = float(env.get("STOP_LOSS_PCT", _cfg("exit.stop_loss_pct", "-30")))
+TP1 = float(env.get("TP1_PCT", _cfg("exit.tp1_pct", "25")))
+TP2 = float(env.get("TP2_PCT", _cfg("exit.tp2_pct", "75")))
+MAX_HOLD = float(env.get("MAX_HOLD_MINUTES", _cfg("exit.max_hold_minutes", "20")))
 REPORT_BOT_TOKEN = env.get("TELEGRAM_BOT_TOKEN", "")
-REPORT_CHAT_ID = env.get("TELEGRAM_REPORT_CHAT_ID", "387074917")
+REPORT_CHAT_ID = env.get("TELEGRAM_REPORT_CHAT_ID", "")
+POLL_SECONDS = int(env.get("POLL_SECONDS", _cfg("exit.poll_seconds", "30") or "30"))
 
 DB_URL = env.get("DATABASE_URL", f"sqlite:///{PROJECT_ROOT}/data/rising.db")
 
 
-# ── Build components ─────────────────────────────────────────────────────────
+# ── Build components ──────────────────────────────────────────────────────────
 
 db = Database(DB_URL)
 price = DexScreenerClient()
@@ -72,14 +87,14 @@ paper = PaperTrader(db)
 positions = PositionManager(db, ExitConfig(
     stop_loss_pct=STOP_LOSS,
     tp1_pct=TP1,
-    tp1_sell_pct=float(env.get("TP1_SELL_PCT", "50")),
+    tp1_sell_pct=float(env.get("TP1_SELL_PCT", _cfg("exit.tp1_sell_pct", "50"))),
     tp2_pct=TP2,
-    tp2_sell_pct=float(env.get("TP2_SELL_PCT", "30")),
+    tp2_sell_pct=float(env.get("TP2_SELL_PCT", _cfg("exit.tp2_sell_pct", "30"))),
     max_hold_minutes=MAX_HOLD,
 ), price, min_liquidity_usd=MIN_LIQ)
 
 
-# ── Telegram message handler ─────────────────────────────────────────────────
+# ── Telegram message handler ──────────────────────────────────────────────────
 
 async def handle_message(text: str, chat: str | None) -> None:
     """Called by TelegramSignalListener for each received message."""
@@ -117,7 +132,7 @@ async def handle_message(text: str, chat: str | None) -> None:
             print(f"    → SKIP: {', '.join(decision.reasons[:2])}")
 
 
-# ── Report builder ───────────────────────────────────────────────────────────
+# ── Report builder ────────────────────────────────────────────────────────────
 
 def build_report() -> str:
     """Build the end-of-session summary string."""
@@ -145,12 +160,15 @@ def build_report() -> str:
     return "\n".join(lines)
 
 
-# ── Helpers ─────────────────────────────────────────────────────────────────
+# ── Helpers ────────────────────────────────────────────────────────────────────
 
 async def send(text: str) -> None:
     import httpx
     if not REPORT_BOT_TOKEN:
         print(f"  [Telegram] no bot token configured, skipping send")
+        return
+    if not REPORT_CHAT_ID:
+        print(f"  [Telegram] no report chat id, skipping send")
         return
     try:
         async with httpx.AsyncClient(timeout=10) as client:
@@ -164,7 +182,7 @@ async def send(text: str) -> None:
         print(f"  Telegram error: {e}")
 
 
-# ── CLI commands ────────────────────────────────────────────────────────────
+# ── CLI commands ──────────────────────────────────────────────────────────────
 
 def check() -> int:
     """Verify all components are correctly wired."""
@@ -202,8 +220,7 @@ def summary() -> int:
 async def run_telegram_session(duration_minutes: float = 240) -> None:
     """Start Telegram listener + price monitor for a timed session, then send report."""
     end_time = datetime.now(timezone.utc).timestamp() + (duration_minutes * 60)
-    poll = 30
-    trade_count = 0
+    poll = POLL_SECONDS
 
     listener = TelegramSignalListener(
         api_id=api_id,
@@ -239,7 +256,7 @@ async def run_telegram_session(duration_minutes: float = 240) -> None:
     await send(report)
 
 
-# ── Entrypoint ───────────────────────────────────────────────────────────────
+# ── Entrypoint ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "telegram"

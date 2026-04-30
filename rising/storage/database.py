@@ -246,11 +246,12 @@ class Database:
 
     def wallet_trade_exists(self, signature: str, wallet_address: str, token_address: str, side: str) -> bool:
         with self.connect() as conn:
-            row = conn.execute(
-                "SELECT 1 FROM wallet_trades WHERE tx_signature=? AND wallet_address=? AND token_address=? AND side=?",
-                (signature, wallet_address, token_address, side),
-            ).fetchone()
-            return row is not None
+            return bool(
+                conn.execute(
+                    "SELECT 1 FROM wallet_trades WHERE tx_signature=? AND wallet_address=? AND token_address=? AND side=?",
+                    (signature, wallet_address, token_address, side),
+                ).fetchone()
+            )
 
     def upsert_wallet_trade(self, swap) -> None:
         with self.connect() as conn:
