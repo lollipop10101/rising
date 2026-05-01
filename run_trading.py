@@ -203,5 +203,5 @@ async def run() -> None:
     print("\n" + report)
 
 if __name__ == "__main__":
-    print("Starting Rising...")
+    print("Starting Rising... (continuous mode)")
     asyncio.run(run())
