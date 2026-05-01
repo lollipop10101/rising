@@ -76,6 +76,10 @@ TELEGRAM_BOT_TOKEN = env.get("TELEGRAM_BOT_TOKEN", "")
 REPORT_BOT_TOKEN = TELEGRAM_BOT_TOKEN
 REPORT_CHAT_ID = env.get("TELEGRAM_REPORT_CHAT_ID", "387074917")
 POLL_SECONDS = int(_env("POLL_SECONDS", "exit.poll_seconds", "30"))
+REPORT_EVERY_SECONDS = int(env.get("REPORT_EVERY_SECONDS", "14400"))  # 4 hours default
+
+# Track for periodic reports
+last_report_at = datetime.now(timezone.utc).timestamp()
 
 db = Database(env.get("DATABASE_URL", "sqlite:///data/rising.db"))
 price = DexScreenerClient()
@@ -185,20 +189,68 @@ async def run() -> None:
     except Exception as e:
         print(f"  Listener cleanup: {e}")
 
-    # Final report
+    # Build rich report
     with db.connect() as conn:
         conn.row_factory = sqlite3.Row
-        cur = conn.execute(
-            "SELECT COUNT(*) as n, SUM(realized_pnl_usd) as pnl, "
-            "SUM(CASE WHEN status='OPEN' THEN 1 ELSE 0 END) as open_n FROM trades"
-        ).fetchone()
-        closed_n = cur["n"] - cur["open_n"]
-        pnl = cur["pnl"] or 0
+        closed_trades = conn.execute(
+            'SELECT * FROM trades WHERE status = "CLOSED" ORDER BY opened_at DESC'
+        ).fetchall()
+        all_trades = conn.execute('SELECT * FROM trades ORDER BY opened_at DESC').fetchall()
 
-    report = (
-        f"Rising Report\nBought: {trade_taken} | Skipped: {skipped}\n"
-        f"Open: {cur['open_n']} | Closed: {closed_n}\nRealized PnL: ${pnl:.2f}"
+    wins = sorted(
+        [t for t in closed_trades if t['realized_pnl_usd'] and t['realized_pnl_usd'] > 0],
+        key=lambda x: x['opened_at'], reverse=True
     )
+    losses = sorted(
+        [t for t in closed_trades if t['realized_pnl_usd'] and t['realized_pnl_usd'] <= 0],
+        key=lambda x: x['opened_at'], reverse=True
+    )
+    total_pnl = sum(t['realized_pnl_usd'] or 0 for t in closed_trades)
+    closed_n = len(closed_trades)
+    win_n = len(wins)
+    loss_n = len(losses)
+    open_n = len([t for t in all_trades if t['status'] == 'OPEN'])
+    avg_win = sum(t['realized_pnl_usd'] for t in wins) / win_n if win_n > 0 else 0
+    avg_loss = sum(t['realized_pnl_usd'] for t in losses) / loss_n if loss_n > 0 else 0
+
+    lines = [
+        f"🧊 Rising Report",
+        f"━━━━━━━━━━━━━━━━",
+        f"PnL: ${total_pnl:.2f} | Open: {open_n} | Closed: {closed_n}",
+        f"Win: {win_n} | Loss: {loss_n}",
+    ]
+    if closed_n > 0:
+        lines.append(
+            f"Win rate: {win_n*100/closed_n:.0f}% | Avg win: +${avg_win:.2f} | Avg loss: ${avg_loss:.2f}"
+        )
+    lines.append(f"━━━━━━━━━━━━━━━━")
+
+    if wins:
+        lines.append(f"✅ WINNERS ({win_n})")
+        for t in wins[:10]:
+            ts = datetime.fromisoformat(t['opened_at']).strftime('%m/%d %H:%M')
+            lines.append(
+                f"  +${t['realized_pnl_usd']:.2f} | {ts} | {t['token_address'][:10]}.. | {t['exit_reason'] or '—'}"
+            )
+
+    if losses:
+        lines.append(f"❌ LOSERS ({loss_n})")
+        for t in losses[:10]:
+            ts = datetime.fromisoformat(t['opened_at']).strftime('%m/%d %H:%M')
+            lines.append(
+                f"  ${t['realized_pnl_usd']:.2f} | {ts} | {t['token_address'][:10]}.. | {t['exit_reason'] or '—'}"
+            )
+
+    open_trades = [t for t in all_trades if t['status'] == 'OPEN']
+    if open_trades:
+        lines.append(f"🟢 OPEN ({len(open_trades)})")
+        for t in sorted(open_trades, key=lambda x: x['opened_at'], reverse=True)[:5]:
+            ts = datetime.fromisoformat(t['opened_at']).strftime('%m/%d %H:%M')
+            lines.append(
+                f"  {t['token_address'][:10]}.. | entry ${t['entry_price']} | {ts}"
+            )
+
+    report = "\n".join(lines)
     await send(report)
     print("\n" + report)
 
