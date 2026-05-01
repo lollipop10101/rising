@@ -154,6 +154,61 @@ async def handler(text: str, chat_id: str | None) -> None:
 
 # ── Main 4-hour session ────────────────────────────────────────────────────
 
+
+async def _send_rich_report(db):
+    with db.connect() as conn:
+        conn.row_factory = sqlite3.Row
+        closed_trades = conn.execute(
+            'SELECT * FROM trades WHERE status = "CLOSED" ORDER BY opened_at ASC'
+        ).fetchall()
+        all_trades = conn.execute("SELECT * FROM trades ORDER BY opened_at ASC").fetchall()
+
+    wins = sorted(
+        [t for t in closed_trades if (t['realized_pnl_usd'] or 0) > 0],
+        key=lambda x: x['opened_at']
+    )
+    losses = sorted(
+        [t for t in closed_trades if (t['realized_pnl_usd'] or 0) <= 0],
+        key=lambda x: x['opened_at']
+    )
+    total_pnl = sum((t['realized_pnl_usd'] or 0) for t in closed_trades)
+    closed_n = len(closed_trades)
+    win_n = len(wins)
+    loss_n = len(losses)
+    open_n = len([t for t in all_trades if t['status'] == 'OPEN'])
+    avg_win = sum((t['realized_pnl_usd'] or 0) for t in wins) / win_n if win_n > 0 else 0
+    avg_loss = sum((t['realized_pnl_usd'] or 0) for t in losses) / loss_n if loss_n > 0 else 0
+
+    lines = [
+        f"🧊 Rising Report",
+        f"━━━━━━━━━━━━━━━━",
+        f"PnL: ${total_pnl:.2f} | Open: {open_n} | Closed: {closed_n}",
+        f"Win: {win_n} | Loss: {loss_n}",
+    ]
+    if closed_n > 0:
+        lines.append(f"Win rate: {win_n*100/closed_n:.0f}% | Avg win: +${avg_win:.2f} | Avg loss: ${avg_loss:.2f}")
+    lines.append(f"━━━━━━━━━━━━━━━━")
+
+    if wins:
+        lines.append(f"✅ WINNERS ({win_n})")
+        for t in wins[:10]:
+            ts = datetime.fromisoformat(t['opened_at'].replace('Z', '+00:00')).strftime('%m/%d %H:%M')
+            lines.append(f"  +${(t['realized_pnl_usd'] or 0):.2f} | {ts} | {t['token_address'][:10]}.. | {t['exit_reason'] or '—'}")
+    if losses:
+        lines.append(f"❌ LOSERS ({loss_n})")
+        for t in losses[:10]:
+            ts = datetime.fromisoformat(t['opened_at'].replace('Z', '+00:00')).strftime('%m/%d %H:%M')
+            lines.append(f"  ${(t['realized_pnl_usd'] or 0):.2f} | {ts} | {t['token_address'][:10]}.. | {t['exit_reason'] or '—'}")
+    open_trades = [t for t in all_trades if t['status'] == 'OPEN']
+    if open_trades:
+        lines.append(f"🟢 OPEN ({len(open_trades)})")
+        for t in sorted(open_trades, key=lambda x: x['opened_at'])[:5]:
+            ts = datetime.fromisoformat(t['opened_at'].replace('Z', '+00:00')).strftime('%m/%d %H:%M')
+            lines.append(f"  {t['token_address'][:10]}.. | entry ${t['entry_price']} | {ts}")
+
+    report = "\n".join(lines)
+    await send(report)
+
 async def run() -> None:
     await send(
         f"Rising started\nSource: {source_chat}\n"
@@ -172,12 +227,17 @@ async def run() -> None:
 
     while datetime.now(timezone.utc).timestamp() < end_time:
         await asyncio.sleep(poll)
+        now_ts = datetime.now(timezone.utc).timestamp()
         try:
             for trade in db.get_open_trades():
                 snapshot = await price.fetch_token(trade["token_address"])
                 if not snapshot.price_usd:
                     continue
                 await positions.evaluate_trade(trade, snapshot.price_usd, datetime.now(timezone.utc))
+
+            if now_ts - last_report_at >= REPORT_EVERY_SECONDS:
+                await _send_rich_report(db)
+                last_report_at = now_ts
         except Exception as e:
             print(f"Monitor error: {e}")
     # Cancel the Telegram listener first, then wait for it to clean up
@@ -198,11 +258,11 @@ async def run() -> None:
         all_trades = conn.execute('SELECT * FROM trades ORDER BY opened_at DESC').fetchall()
 
     wins = sorted(
-        [t for t in closed_trades if t['realized_pnl_usd'] and t['realized_pnl_usd'] > 0],
+        [t for t in closed_trades if (t['realized_pnl_usd'] or 0) > 0],
         key=lambda x: x['opened_at'], reverse=True
     )
     losses = sorted(
-        [t for t in closed_trades if t['realized_pnl_usd'] and t['realized_pnl_usd'] <= 0],
+        [t for t in closed_trades if (t['realized_pnl_usd'] or 0) <= 0],
         key=lambda x: x['opened_at'], reverse=True
     )
     total_pnl = sum(t['realized_pnl_usd'] or 0 for t in closed_trades)
@@ -210,8 +270,8 @@ async def run() -> None:
     win_n = len(wins)
     loss_n = len(losses)
     open_n = len([t for t in all_trades if t['status'] == 'OPEN'])
-    avg_win = sum(t['realized_pnl_usd'] for t in wins) / win_n if win_n > 0 else 0
-    avg_loss = sum(t['realized_pnl_usd'] for t in losses) / loss_n if loss_n > 0 else 0
+    avg_win = sum((t['realized_pnl_usd'] or 0) for t in wins) / win_n if win_n > 0 else 0
+    avg_loss = sum((t['realized_pnl_usd'] or 0) for t in losses) / loss_n if loss_n > 0 else 0
 
     lines = [
         f"🧊 Rising Report",
@@ -228,7 +288,7 @@ async def run() -> None:
     if wins:
         lines.append(f"✅ WINNERS ({win_n})")
         for t in wins[:10]:
-            ts = datetime.fromisoformat(t['opened_at']).strftime('%m/%d %H:%M')
+            ts = datetime.fromisoformat(t['opened_at'].replace('Z', '+00:00')).strftime('%m/%d %H:%M')
             lines.append(
                 f"  +${t['realized_pnl_usd']:.2f} | {ts} | {t['token_address'][:10]}.. | {t['exit_reason'] or '—'}"
             )
@@ -236,7 +296,7 @@ async def run() -> None:
     if losses:
         lines.append(f"❌ LOSERS ({loss_n})")
         for t in losses[:10]:
-            ts = datetime.fromisoformat(t['opened_at']).strftime('%m/%d %H:%M')
+            ts = datetime.fromisoformat(t['opened_at'].replace('Z', '+00:00')).strftime('%m/%d %H:%M')
             lines.append(
                 f"  ${t['realized_pnl_usd']:.2f} | {ts} | {t['token_address'][:10]}.. | {t['exit_reason'] or '—'}"
             )
@@ -245,7 +305,7 @@ async def run() -> None:
     if open_trades:
         lines.append(f"🟢 OPEN ({len(open_trades)})")
         for t in sorted(open_trades, key=lambda x: x['opened_at'], reverse=True)[:5]:
-            ts = datetime.fromisoformat(t['opened_at']).strftime('%m/%d %H:%M')
+            ts = datetime.fromisoformat(t['opened_at'].replace('Z', '+00:00')).strftime('%m/%d %H:%M')
             lines.append(
                 f"  {t['token_address'][:10]}.. | entry ${t['entry_price']} | {ts}"
             )
