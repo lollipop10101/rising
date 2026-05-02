@@ -16,14 +16,14 @@ from rising.strategy.trade_decision import StrategyEngine
 
 @dataclass
 class AppConfig:
-    api_id:int=0; api_hash:str=''; telegram_session:str='rising_session'; telegram_source_chat:str=''; bot_token:str=''; report_chat_id:str=''; database_url:str='sqlite:///data/rising.db'; quote_usd:float=15; max_open_positions:int=3; min_liquidity_usd:float=5000; min_volume_5m_usd:float=500; max_pump_5m_pct:float=200; max_risk_score:int=70; stop_loss_pct:float=-30; tp1_pct:float=25; tp1_sell_pct:float=50; tp2_pct:float=75; tp2_sell_pct:float=30; max_hold_minutes:float=20; entry_slippage_pct:float=0; exit_fee_pct:float=0; poll_seconds:int=30
+    api_id:int=0; api_hash:str=''; telegram_session:str='rising_session'; telegram_source_chat:str=''; bot_token:str=''; report_chat_id:str=''; database_url:str='sqlite:///data/rising.db'; quote_usd:float=15; max_open_positions:int=3; min_liquidity_usd:float=5000; min_volume_5m_usd:float=500; max_pump_5m_pct:float=200; max_risk_score:int=70; stop_loss_pct:float=-30; tp1_pct:float=25; tp1_sell_pct:float=50; tp2_pct:float=75; tp2_sell_pct:float=30; max_hold_minutes:float=20; entry_slippage_pct:float=0; exit_fee_pct:float=0; poll_seconds:int=30; recent_repeat_minutes:int=10; old_address_minutes:int=60; 
 
 class RisingApp:
     def __init__(self, cfg: AppConfig):
         self.cfg=cfg
         self.db=Database(cfg.database_url)
         self.price=DexScreenerClient()
-        self.history=TokenHistoryChecker(self.db)
+        self.history=TokenHistoryChecker(self.db,self.cfg.recent_repeat_minutes,self.cfg.old_address_minutes)
         self.risk=RiskEngine(cfg.min_liquidity_usd,cfg.min_volume_5m_usd,cfg.max_pump_5m_pct)
         self.strategy=StrategyEngine(cfg.quote_usd,cfg.max_risk_score)
         self.paper=PaperTrader(self.db,cfg.entry_slippage_pct)
