@@ -26,7 +26,7 @@ class RisingApp:
         self.history=TokenHistoryChecker(self.db,self.cfg.recent_repeat_minutes,self.cfg.old_address_minutes)
         self.risk=RiskEngine(cfg.min_liquidity_usd,cfg.min_volume_5m_usd,cfg.max_pump_5m_pct)
         self.strategy=StrategyEngine(cfg.quote_usd,cfg.max_risk_score)
-        self.paper=PaperTrader(self.db,cfg.entry_slippage_pct)
+        self.paper=PaperTrader(self.db,cfg.entry_slippage_pct,getattr(cfg,'max_exposure_per_trade_pct',0.10),getattr(cfg,'max_total_exposure_pct',0.30),getattr(cfg,'min_trade_size_usd',1.0))
         self.positions=PositionManager(self.db,ExitConfig(cfg.stop_loss_pct,cfg.tp1_pct,cfg.tp1_sell_pct,cfg.tp2_pct,cfg.tp2_sell_pct,cfg.max_hold_minutes,cfg.exit_fee_pct),self.price,cfg.min_liquidity_usd)
         self.notifier=TelegramNotifier(cfg.bot_token,cfg.report_chat_id)
     async def handle_message(self, text, chat):
@@ -50,6 +50,12 @@ class RisingApp:
                 ev=await self.positions.evaluate_trade(t,snap.price_usd,now)
                 if ev:
                     await self.notifier.send(f'📍 Rising exit: {ev}\nToken: {t["token_address"]}\nPrice: ${snap.price_usd}')
+                    # Update paper balance after exit
+                    closed = self.db.execute('SELECT realized_pnl_usd, initial_size_usd FROM trades WHERE id=?', (t['id'],)).fetchone()
+                    if closed:
+                        pnl = closed['realized_pnl_usd'] or 0
+                        bal = self.db.get_balance()
+                        self.db.update_balance(bal + pnl, f'exit {ev} trade {t["id"]}')
     async def run_telegram(self):
         if not self.cfg.api_id or not self.cfg.api_hash or not self.cfg.telegram_source_chat:
             raise RuntimeError('TELEGRAM_API_ID, TELEGRAM_API_HASH, and TELEGRAM_SOURCE_CHAT are required')

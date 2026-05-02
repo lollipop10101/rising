@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS trades(id INTEGER PRIMARY KEY AUTOINCREMENT, token_ad
 CREATE TABLE IF NOT EXISTS trade_events(id INTEGER PRIMARY KEY AUTOINCREMENT, trade_id INTEGER NOT NULL, event_at TEXT NOT NULL, event_type TEXT NOT NULL, price_usd REAL, qty_pct REAL, pnl_usd REAL, note TEXT);
 CREATE TABLE IF NOT EXISTS smart_wallets(wallet_address TEXT PRIMARY KEY, label TEXT, source TEXT, score INTEGER NOT NULL DEFAULT 0, copyability_score INTEGER NOT NULL DEFAULT 0, insider_score INTEGER NOT NULL DEFAULT 0, win_rate REAL NOT NULL DEFAULT 0, realized_pnl_usd REAL NOT NULL DEFAULT 0, trade_count INTEGER NOT NULL DEFAULT 0, tier TEXT NOT NULL DEFAULT 'D_TIER_NOISE', status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL, updated_at TEXT NOT NULL, reasons TEXT);
 CREATE TABLE IF NOT EXISTS wallet_trades(id INTEGER PRIMARY KEY AUTOINCREMENT, wallet_address TEXT NOT NULL, token_address TEXT NOT NULL, side TEXT NOT NULL, tx_signature TEXT NOT NULL, price_usd REAL, amount_usd REAL, token_amount REAL, timestamp TEXT NOT NULL, dex TEXT, source TEXT, UNIQUE(wallet_address, token_address, side, tx_signature));
+CREATE TABLE IF NOT EXISTS paper_balances(id INTEGER PRIMARY KEY AUTOINCREMENT, balance_usd REAL NOT NULL, updated_at TEXT NOT NULL, note TEXT);
 CREATE TABLE IF NOT EXISTS copy_signals(id INTEGER PRIMARY KEY AUTOINCREMENT, wallet_address TEXT NOT NULL, token_address TEXT NOT NULL, signal_time TEXT NOT NULL, tx_signature TEXT NOT NULL, wallet_score INTEGER, copyability_score INTEGER, token_risk_score INTEGER, decision TEXT NOT NULL, reason TEXT, paper_trade_id INTEGER);
 ''')
     def get_token(self,a):
@@ -64,5 +65,14 @@ CREATE TABLE IF NOT EXISTS copy_signals(id INTEGER PRIMARY KEY AUTOINCREMENT, wa
         with self.connect() as c: return c.execute('SELECT 1 FROM wallet_trades WHERE tx_signature=? AND wallet_address=? AND token_address=? AND side=?',(sig,w,tok,side)).fetchone() is not None
     def upsert_wallet_trade(self,swap):
         with self.connect() as c: c.execute('INSERT OR IGNORE INTO wallet_trades(wallet_address,token_address,side,tx_signature,price_usd,amount_usd,token_amount,timestamp,dex,source) VALUES(?,?,?,?,?,?,?,?,?,?)',(swap.wallet_address,swap.token_address,swap.side,swap.signature,swap.price_usd,swap.amount_usd,swap.token_amount,_to_iso(swap.timestamp),swap.dex,swap.source))
+    def get_balance(self) -> float:
+        with self.connect() as c:
+            row = c.execute("SELECT balance_usd FROM paper_balances ORDER BY id DESC LIMIT 1").fetchone()
+            return row['balance_usd'] if row else 100.0
+
+    def update_balance(self, new_balance: float, note: str = ''):
+        with self.connect() as c:
+            c.execute("INSERT INTO paper_balances(balance_usd, updated_at, note) VALUES(?, datetime('now'), ?)", (new_balance, note))
+
     def add_copy_signal(self,swap,score,token_risk_score,decision,reason,paper_trade_id=None):
         with self.connect() as c: c.execute('INSERT INTO copy_signals(wallet_address,token_address,signal_time,tx_signature,wallet_score,copyability_score,token_risk_score,decision,reason,paper_trade_id) VALUES(?,?,?,?,?,?,?,?,?,?)',(swap.wallet_address,swap.token_address,_to_iso(swap.timestamp),swap.signature,score.score,score.copyability_score,token_risk_score,decision,reason,paper_trade_id))
