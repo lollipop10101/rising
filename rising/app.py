@@ -77,9 +77,9 @@ class RisingApp:
         with self.db.connect() as c:
             c.row_factory=sqlite3.Row
             closed=c.execute("SELECT * FROM trades WHERE status='CLOSED' ORDER BY opened_at ASC").fetchall()
-            all_trades=c.execute("SELECT * FROM trades ORDER BY opened_at ASC").fetchall()
-        wins=sorted([t for t in closed if (t['realized_pnl_usd'] or 0)>0],key=lambda x:x['opened_at'])
-        losses=sorted([t for t in closed if (t['realized_pnl_usd'] or 0)<=0],key=lambda x:x['opened_at'])
+            all_trades=c.execute("SELECT * FROM trades ORDER BY opened_at DESC").fetchall()
+        wins=sorted([t for t in closed if (t['realized_pnl_usd'] or 0)>0],key=lambda x:x['opened_at'], reverse=True)
+        losses=sorted([t for t in closed if (t['realized_pnl_usd'] or 0)<=0],key=lambda x:x['opened_at'], reverse=True)
         total=sum((t['realized_pnl_usd'] or 0) for t in closed)
         closed_n=len(closed)
         win_n=len(wins)
@@ -104,7 +104,7 @@ class RisingApp:
         open_trades=[t for t in all_trades if t['status']=='OPEN']
         if open_trades:
             lines.append(f'🟢 OPEN ({len(open_trades)})')
-            for t in sorted(open_trades,key=lambda x:x['opened_at'])[:5]:
+            for t in sorted(open_trades,key=lambda x:x['opened_at'], reverse=True)[:5]:
                 ts=datetime.fromisoformat(t['opened_at'].replace('Z','+00:00')).strftime('%m/%d %H:%M')
                 lines.append(f"  {t['token_address'][:10]}.. | entry ${t['entry_price']} | {ts}")
         return '\n'.join(lines)
