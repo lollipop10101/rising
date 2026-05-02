@@ -94,7 +94,8 @@ class RisingApp:
         open_n=len([t for t in all_trades if t['status']=='OPEN'])
         avg_win=sum((t['realized_pnl_usd'] or 0) for t in wins)/win_n if win_n>0 else 0
         avg_loss=sum((t['realized_pnl_usd'] or 0) for t in losses)/loss_n if loss_n>0 else 0
-        lines=['🧊 Rising Report','━━━━━━━━━━━━━━━━',f'PnL: ${total:.2f} | Open: {open_n} | Closed: {closed_n}',f'Win: {win_n} | Loss: {loss_n}']
+        bal=self.db.get_balance()
+        lines=[f'🧊 Rising Report','━━━━━━━━━━━━━━━━',f'Balance: ${bal:.2f} | Closed: {closed_n} | PnL: ${total:.2f}',f'Win: {win_n} | Loss: {loss_n}']
         if closed_n>0:
             lines.append(f"Win rate: {win_n*100/closed_n:.0f}% | Avg win: +${avg_win:.2f} | Avg loss: ${avg_loss:.2f}")
         lines.append('━━━━━━━━━━━━━━━━')
