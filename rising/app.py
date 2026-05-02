@@ -51,7 +51,8 @@ class RisingApp:
                 if ev:
                     await self.notifier.send(f'📍 Rising exit: {ev}\nToken: {t["token_address"]}\nPrice: ${snap.price_usd}')
                     # Update paper balance after exit
-                    closed = self.db.execute('SELECT realized_pnl_usd, initial_size_usd FROM trades WHERE id=?', (t['id'],)).fetchone()
+                    with self.db.connect() as c:
+                        closed = c.execute('SELECT realized_pnl_usd FROM trades WHERE id=?', (t['id'],)).fetchone()
                     if closed:
                         pnl = closed['realized_pnl_usd'] or 0
                         bal = self.db.get_balance()
