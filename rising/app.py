@@ -53,7 +53,24 @@ class RisingApp:
     async def run_telegram(self):
         if not self.cfg.api_id or not self.cfg.api_hash or not self.cfg.telegram_source_chat:
             raise RuntimeError('TELEGRAM_API_ID, TELEGRAM_API_HASH, and TELEGRAM_SOURCE_CHAT are required')
-        await TelegramSignalListener(self.cfg.api_id,self.cfg.api_hash,self.cfg.telegram_session,self.cfg.telegram_source_chat).run(self.handle_message)
+        from datetime import datetime, timezone
+        import asyncio
+        listener = TelegramSignalListener(self.cfg.api_id,self.cfg.api_hash,self.cfg.telegram_session,self.cfg.telegram_source_chat)
+        listener_task = asyncio.create_task(listener.run(self.handle_message))
+        last_report_at = datetime.now(timezone.utc).timestamp()
+        REPORT_EVERY_SECONDS = int(self.cfg.poll_seconds * 60 * 4)  # 4 hours default
+        while True:
+            await asyncio.sleep(self.cfg.poll_seconds)
+            now_ts = datetime.now(timezone.utc).timestamp()
+            if now_ts - last_report_at >= REPORT_EVERY_SECONDS:
+                report = self.build_report()
+                await self.notifier.send(report)
+                last_report_at = now_ts
+        listener_task.cancel()
+        try:
+            await listener_task
+        except asyncio.CancelledError:
+            pass
     def build_report(self):
         from datetime import datetime, timezone
         with self.db.connect() as c:
