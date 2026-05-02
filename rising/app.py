@@ -61,6 +61,7 @@ class RisingApp:
         REPORT_EVERY_SECONDS = int(self.cfg.poll_seconds * 60 * 4)  # 4 hours default
         while True:
             await asyncio.sleep(self.cfg.poll_seconds)
+            await self.monitor_once()
             now_ts = datetime.now(timezone.utc).timestamp()
             if now_ts - last_report_at >= REPORT_EVERY_SECONDS:
                 report = self.build_report()
