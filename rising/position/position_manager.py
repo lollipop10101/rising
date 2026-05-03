@@ -15,7 +15,7 @@ class PositionManager:
         if pnl_pct>=self.config.tp2_pct and rem>(100-self.config.tp1_sell_pct-self.config.tp2_sell_pct):
             qty=min(self.config.tp2_sell_pct,rem); pnl=self._pnl(size,qty,pnl_pct); new=rem-qty; self.db.add_trade_event(tid,'TP2',now,net,qty,pnl,'partial exit'); self.db.update_trade(tid,new,real+pnl,'MOONBAG' if new>0 else 'CLOSED',None if new>0 else now,'TP2' if new==0 else None,net); return 'TP2'
         # Trailing stop: if peak > +15%, raise SL to -10%
-        peak=float(trade.get('peak_price') or entry)
+        peak=float(trade['peak_price']) if 'peak_price' in trade.keys() else entry
         if net>peak: peak=net
         trailing_sl_pct=self.config.stop_loss_pct
         if (peak/entry-1)*100>=15: trailing_sl_pct=max(trailing_sl_pct,-10)
