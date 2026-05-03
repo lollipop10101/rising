@@ -30,6 +30,8 @@ class RisingApp:
         self.positions=PositionManager(self.db,ExitConfig(cfg.stop_loss_pct,cfg.tp1_pct,cfg.tp1_sell_pct,cfg.tp2_pct,cfg.tp2_sell_pct,cfg.max_hold_minutes,cfg.exit_fee_pct),self.price,cfg.min_liquidity_usd)
         self.notifier=TelegramNotifier(cfg.bot_token,cfg.report_chat_id)
     async def handle_message(self, text, chat):
+        skip_words=['save','launchpad','comeback','แปะ','คัมแบ็ค','before sleep','back to','back soon']
+        if any(w in text.lower() for w in skip_words): return
         for address in extract_solana_addresses(text):
             now=datetime.now(timezone.utc)
             signal=self.history.classify(address,now)
